@@ -78,12 +78,14 @@ export default function Home() {
           to rank higher in search <em>and</em> get cited by AI engines.
         </p>
 
-        <URLInput onSubmit={handleAnalyze} isLoading={isLoading} />
-        
-        <p className="disclaimer-text">
-          * Note: Works best on standard websites. Enterprise sites with strict anti-bot 
-          protection (like Cloudflare) may block the analysis.
-        </p>
+        <div className="url-input-container">
+          <URLInput onSubmit={handleAnalyze} isLoading={isLoading} />
+          
+          <p className="disclaimer-text">
+            <strong>Note:</strong> Works best on standard websites. Enterprise sites with strict anti-bot 
+            protection (like Cloudflare) may block the analysis.
+          </p>
+        </div>
 
         {isLoading && (
           <ProgressIndicator
