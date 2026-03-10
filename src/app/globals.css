@@ -774,6 +774,23 @@ a:hover { text-decoration: underline; }
   box-shadow: var(--shadow);
 }
 
+.url-input-container {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 2rem;
+  width: 100%;
+}
+
+.disclaimer-text {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  text-align: center;
+  margin-top: -1rem;
+  margin-bottom: 2rem;
+  max-width: 600px;
+  line-height: 1.4;
+}
+
 .signin-divider {
   display: flex;
   align-items: center;

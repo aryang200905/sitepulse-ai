@@ -79,6 +79,11 @@ export default function Home() {
         </p>
 
         <URLInput onSubmit={handleAnalyze} isLoading={isLoading} />
+        
+        <p className="disclaimer-text">
+          * Note: Works best on standard websites. Enterprise sites with strict anti-bot 
+          protection (like Cloudflare) may block the analysis.
+        </p>
 
         {isLoading && (
           <ProgressIndicator
