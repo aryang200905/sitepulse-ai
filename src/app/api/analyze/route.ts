@@ -56,6 +56,14 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error('Analysis error:', err);
     const message = err instanceof Error ? err.message : 'Analysis failed.';
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+
+    // Detect anti-bot / access-denied errors
+    const isAntiBot = /: (403|401|406|520|521|522|523)$/.test(message)
+      || /forbidden|access denied|blocked/i.test(message);
+
+    return NextResponse.json(
+      { success: false, error: message, ...(isAntiBot && { errorType: 'anti-bot' }) },
+      { status: 500 },
+    );
   }
 }

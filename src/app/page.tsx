@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/AuthProvider';
 import URLInput from '@/components/URLInput';
+import UserMenu from '@/components/UserMenu';
 import ProgressIndicator, { PIPELINE_STEPS } from '@/components/ProgressIndicator';
 
 export default function Home() {
@@ -11,6 +12,7 @@ export default function Home() {
   const { user, loading: authLoading } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [step, setStep] = useState(0);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -20,6 +22,7 @@ export default function Home() {
 
   const handleAnalyze = async (url: string) => {
     setIsLoading(true);
+    setErrorMessage(null);
     setStep(0);
 
     // Simulate progressive step updates
@@ -45,13 +48,19 @@ export default function Home() {
         sessionStorage.setItem('sitepulse_result', JSON.stringify(data.data));
         router.push('/results');
       } else {
-        alert(data.error || 'Analysis failed. Please try again.');
+        if (data.errorType === 'anti-bot') {
+          setErrorMessage(
+            `🛡️ This website has strict anti-bot protection measures, so we can't retrieve results for it. Try a different URL.`
+          );
+        } else {
+          setErrorMessage(data.error || 'Analysis failed. Please try again.');
+        }
         setIsLoading(false);
       }
     } catch (err) {
       clearInterval(stepInterval);
       console.error(err);
-      alert('Network error. Please try again.');
+      setErrorMessage('Network error. Please check your connection and try again.');
       setIsLoading(false);
     }
   };
@@ -65,6 +74,9 @@ export default function Home() {
       <div className="bg-blob blob-1" />
       <div className="bg-blob blob-2" />
       <div className="bg-blob blob-3" />
+
+      {/* User menu */}
+      <UserMenu />
 
       <main className="landing-content">
         <div className="logo-mark">◆ SitePulse AI</div>
@@ -81,6 +93,19 @@ export default function Home() {
         <div className="url-input-container">
           <URLInput onSubmit={handleAnalyze} isLoading={isLoading} />
           
+          {errorMessage && (
+            <div className="error-banner" id="error-banner">
+              <span className="error-banner-text">{errorMessage}</span>
+              <button
+                className="error-banner-dismiss"
+                onClick={() => setErrorMessage(null)}
+                aria-label="Dismiss error"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           <p className="disclaimer-text">
             <strong>Note:</strong> Works best on standard websites. Enterprise sites with strict anti-bot 
             protection (like Cloudflare) may block the analysis.
