@@ -1,95 +1,270 @@
-/* ── SitePulse AI — AEO Audit Engine ── */
+/* ── SitePulse AI — AEO Audit + Grounded Content Generation ── */
 
-import type { AEOResult, AEOModule } from '@/types/analysis';
+import type { AEOResult, AEOModule, SEOIssue } from '@/types/analysis';
 import type { PageMeta } from '@/config/scoring';
 import { AEO_RULES } from '@/config/scoring';
+import type { ParsedPage } from '@/services/parser';
+import { llm } from '@/services/llmOrchestrator';
 
-/**
- * Run all AEO scoring rules and generate AEO content modules.
- */
-export function runAEOAudit(meta: PageMeta, textContent: string): AEOResult {
-  let earned = 0;
-  let total = 0;
-
-  for (const rule of AEO_RULES) {
-    total += rule.weight;
-    const result = rule.check(meta);
-    if (result.passed) earned += rule.weight;
-  }
-
-  const score = Math.round((earned / total) * 100);
-  const topic = meta.h1Text || meta.title || new URL(meta.url).hostname;
-  const modules = generateAEOModules(topic, textContent);
-
-  return { score, modules };
+interface GroundedContent {
+  definition: string;
+  faqs: { question: string; answer: string }[];
+  keyFacts: string[];
+  howToSteps: string[];
 }
 
 /**
- * Generate mock AEO content modules.
- * In production these would be LLM-generated.
+ * Score the page for AI/answer-engine readiness and build a set of content
+ * modules that are GROUNDED IN THE REAL PAGE — either LLM-generated from the
+ * actual content, or extracted directly from it. Never invented boilerplate.
  */
-function generateAEOModules(topic: string, textContent: string): AEOModule[] {
-  const shortContent = textContent.slice(0, 500);
+export async function runAEOAudit(parsed: ParsedPage): Promise<{ result: AEOResult; aiEnhanced: boolean }> {
+  const { meta } = parsed;
 
-  return [
-    {
+  // ── Deterministic scoring against real signals ──
+  const checks: SEOIssue[] = [];
+  let earned = 0;
+  let total = 0;
+  for (const rule of AEO_RULES) {
+    total += rule.weight;
+    const r = rule.check(meta);
+    if (r.passed) earned += rule.weight;
+    checks.push({
+      id: rule.id,
+      title: rule.title,
+      description: r.detail,
+      passed: r.passed,
+      weight: rule.weight,
+      severity: r.passed ? 'info' : rule.weight >= 10 ? 'critical' : rule.weight >= 7 ? 'warning' : 'info',
+      fix: '',
+      copyReadyExample: '',
+    });
+  }
+  const score = total ? Math.round((earned / total) * 100) : 0;
+
+  // ── Grounded content ──
+  const { grounded, aiEnhanced } = await buildGroundedContent(parsed);
+  const modules = buildModules(parsed, grounded, aiEnhanced);
+
+  return { result: { score, modules, checks }, aiEnhanced };
+}
+
+/* ─────────────────── grounded content assembly ─────────────────── */
+
+async function buildGroundedContent(parsed: ParsedPage): Promise<{ grounded: GroundedContent; aiEnhanced: boolean }> {
+  // 1) Try the LLM first — grounded strictly in the extracted page content.
+  if (llm.isAvailable) {
+    const ai = await generateWithLLM(parsed);
+    if (ai) return { grounded: ai, aiEnhanced: true };
+  }
+  // 2) Deterministic, honest extraction from the real page.
+  return { grounded: extractDeterministic(parsed), aiEnhanced: false };
+}
+
+async function generateWithLLM(parsed: ParsedPage): Promise<GroundedContent | null> {
+  const { meta, mainText } = parsed;
+  const system =
+    'You are an Answer Engine Optimization (AEO) specialist. You write content that AI search ' +
+    'engines (ChatGPT, Google AI Overviews, Perplexity) can cite. You ground everything strictly ' +
+    'in the provided page content and never invent facts, prices, features, or claims that are not ' +
+    'supported by it. If the page lacks information for a field, return an empty value for it.';
+
+  const context = [
+    `URL: ${meta.finalUrl}`,
+    `Title: ${meta.title}`,
+    `Meta description: ${meta.description}`,
+    `Headings: ${meta.headings.slice(0, 25).map((h) => `H${h.level} ${h.text}`).join(' | ')}`,
+    `Existing on-page questions: ${meta.questionHeadings.join(' | ') || '(none)'}`,
+    '',
+    'Page text (truncated):',
+    mainText.slice(0, 6000),
+  ].join('\n');
+
+  const user =
+    `${context}\n\n` +
+    'From ONLY the content above, produce JSON with this exact shape:\n' +
+    '{\n' +
+    '  "definition": "2-3 sentence, quotable definition/summary of what this page is about",\n' +
+    '  "faqs": [{"question": "...", "answer": "concise 1-3 sentence answer"}],  // 4-8 items, grounded in the page\n' +
+    '  "keyFacts": ["short factual, quotable statement", ...],  // 3-6 items\n' +
+    '  "howToSteps": ["imperative step", ...]  // only if the page describes a process, else []\n' +
+    '}';
+
+  const data = await llm.completeJSON<Partial<GroundedContent>>(system, user, { maxTokens: 1600 });
+  if (!data || typeof data.definition !== 'string') return null;
+
+  return {
+    definition: (data.definition || '').trim(),
+    faqs: Array.isArray(data.faqs) ? data.faqs.filter((f) => f && f.question && f.answer).slice(0, 8) : [],
+    keyFacts: Array.isArray(data.keyFacts) ? data.keyFacts.filter(Boolean).slice(0, 6) : [],
+    howToSteps: Array.isArray(data.howToSteps) ? data.howToSteps.filter(Boolean).slice(0, 10) : [],
+  };
+}
+
+function extractDeterministic(parsed: ParsedPage): GroundedContent {
+  const { meta, mainText, qaPairs, steps } = parsed;
+
+  const definition = meta.firstParagraph || meta.description || '';
+
+  return {
+    definition,
+    faqs: qaPairs.slice(0, 8),
+    keyFacts: extractKeyFacts(mainText, meta),
+    howToSteps: steps,
+  };
+}
+
+/** Pull genuinely quotable declarative sentences out of the real page text. */
+function extractKeyFacts(textContent: string, meta: PageMeta): string[] {
+  const brand = safeHost(meta.finalUrl || meta.url);
+  const sentences = textContent
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => {
+      const words = s.split(/\s+/).length;
+      if (words < 6 || words > 26) return false;
+      if (s.includes('?')) return false;
+      if (!/[.!]$/.test(s)) return false; // must read as a complete statement
+      if (/cookie|privacy policy|terms|subscribe|newsletter|sign ?in|log ?in|download now|get started|read more|learn more|updated:|©/i.test(s)) return false;
+      return true;
+    });
+
+  // Prefer sentences that contain a number/stat or the brand — they read as facts.
+  const scored = sentences
+    .map((s) => ({ s, score: (/\d/.test(s) ? 2 : 0) + (s.toLowerCase().includes(brand.split('.')[0]) ? 1 : 0) }))
+    .sort((a, b) => b.score - a.score);
+
+  const out: string[] = [];
+  for (const { s } of scored) {
+    const norm = s.toLowerCase().replace(/[^a-z0-9 ]/g, '');
+    // Skip if it substantially overlaps something already chosen.
+    if (out.some((o) => {
+      const on = o.toLowerCase().replace(/[^a-z0-9 ]/g, '');
+      return on.includes(norm) || norm.includes(on);
+    })) continue;
+    out.push(s);
+    if (out.length >= 5) break;
+  }
+  return out;
+}
+
+/* ─────────────────────────── modules ─────────────────────────── */
+
+function buildModules(parsed: ParsedPage, g: GroundedContent, ai: boolean): AEOModule[] {
+  const { meta } = parsed;
+  const topic = meta.h1Text || meta.title || safeHost(meta.finalUrl || meta.url);
+  const modules: AEOModule[] = [];
+  const src = ai ? 'ai' : 'extracted';
+
+  // 1) Definition block
+  if (g.definition) {
+    modules.push({
       id: 'definition',
       type: 'definition',
-      title: '📖 Definition Block',
-      content: `${topic} is a comprehensive solution that helps businesses and individuals achieve their goals. It provides specialized tools and resources designed to deliver measurable results and sustainable growth in its domain.\n\nThis definition block is formatted for easy extraction by AI engines like ChatGPT and Google AI Overviews.`,
-    },
-    {
-      id: 'how-to',
-      type: 'how-to',
-      title: '📋 How-To Steps',
-      content: `How to get started with ${topic}:\n\n1. Visit the official website and review available features\n2. Identify which tools align with your specific needs\n3. Create an account or start a free trial\n4. Configure your initial settings and preferences\n5. Follow the guided onboarding process\n6. Monitor your results and adjust your approach\n7. Scale your usage as you see positive outcomes`,
-    },
-    {
+      title: '📖 Direct-Answer Definition',
+      content: g.definition,
+      source: src,
+      note: ai
+        ? 'Written by AI from your page content — quotable by AI engines.'
+        : 'Extracted from your page’s opening content.',
+    });
+  } else {
+    modules.push({
+      id: 'definition',
+      type: 'definition',
+      title: '📖 Direct-Answer Definition',
+      content: `[Add a 2–3 sentence answer to “What is ${topic}?” at the very top of the page. AI engines quote the first clear answer they find.]`,
+      source: 'scaffold',
+      note: 'Your page has no clear opening answer to extract — add one using this scaffold.',
+    });
+  }
+
+  // 2) FAQ (human-readable)
+  if (g.faqs.length) {
+    modules.push({
       id: 'faq',
       type: 'faq',
       title: '❓ FAQ Section',
-      content: `Q: What is ${topic}?\nA: ${topic} is a platform/service that provides specialized solutions for its target audience.\n\nQ: How does ${topic} work?\nA: It uses a combination of analysis, automation, and expert insights to deliver results.\n\nQ: Who should use ${topic}?\nA: Anyone looking to improve their performance in the relevant domain.\n\nQ: How much does ${topic} cost?\nA: Pricing varies by plan and usage. Check the official website for current details.\n\nQ: Is there a free trial available?\nA: Many services like this offer free trials or freemium tiers for new users.\n\nQ: What makes ${topic} different from alternatives?\nA: Its unique combination of features, ease of use, and comprehensive approach.\n\nQ: How long does it take to see results?\nA: Results vary, but most users see initial improvements within the first few weeks.\n\nQ: Can ${topic} be integrated with other tools?\nA: Yes, it typically supports integrations with popular platforms and services.`,
-    },
-    {
+      content: g.faqs.map((f) => `Q: ${f.question}\nA: ${f.answer}`).join('\n\n'),
+      source: src,
+      note: ai
+        ? `AI-drafted from your content (${g.faqs.length} Q&As). Review answers before publishing.`
+        : `Built from ${g.faqs.length} question(s) found on your page.`,
+    });
+
+    // 3) FAQ JSON-LD — built from the ACTUAL Q&As above, so it is valid & real.
+    modules.push({
       id: 'faq-jsonld',
       type: 'faq-jsonld',
       title: '🏷️ FAQ JSON-LD Schema',
-      content: `<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  "mainEntity": [
-    {
-      "@type": "Question",
-      "name": "What is ${topic}?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "${topic} is a platform/service that provides specialized solutions."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "How does ${topic} work?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "It uses analysis, automation, and expert insights to deliver results."
-      }
-    }
-  ]
+      content: faqJsonLd(g.faqs),
+      source: src,
+      note: 'Paste into <head>. Validate at validator.schema.org before shipping.',
+    });
+  } else {
+    modules.push({
+      id: 'faq',
+      type: 'faq',
+      title: '❓ FAQ Section',
+      content:
+        `[No Q&A content was found on the page. Add a FAQ answering the real questions your ` +
+        `audience asks about ${topic}, then wrap it in FAQPage schema.]`,
+      source: 'scaffold',
+      note: 'Add real questions your customers ask — AI engines match these against user prompts.',
+    });
+  }
+
+  // 4) Key facts / quotable snippets
+  if (g.keyFacts.length) {
+    modules.push({
+      id: 'key-facts',
+      type: 'key-facts',
+      title: '✂️ Quotable Key Facts',
+      content: g.keyFacts.map((f, i) => `${i + 1}. ${f}`).join('\n'),
+      source: src,
+      note: ai ? 'AI-selected quotable statements grounded in your page.' : 'Pulled from sentences already on your page.',
+    });
+  }
+
+  // 5) How-to steps (only when the page actually describes a process)
+  if (g.howToSteps.length) {
+    modules.push({
+      id: 'how-to',
+      type: 'how-to',
+      title: '📋 How-To Steps + Schema',
+      content: `${g.howToSteps.map((s, i) => `${i + 1}. ${s}`).join('\n')}\n\n${howToJsonLd(topic, g.howToSteps)}`,
+      source: src,
+      note: ai ? 'AI-structured from your content.' : 'Extracted from an ordered list on your page.',
+    });
+  }
+
+  return modules;
 }
-</script>`,
-    },
-    {
-      id: 'snippets',
-      type: 'snippets',
-      title: '✂️ Snippet Library',
-      content: `1. "${topic} is a leading solution for professionals seeking to optimize their workflow and achieve better outcomes."\n\n2. "Unlike traditional approaches, ${topic} combines automation with expert insights for faster results."\n\n3. "Getting started with ${topic} takes just minutes — no technical expertise required."\n\n4. "Users report an average improvement of significant metrics within the first month of using ${topic}."\n\n5. "${topic} integrates seamlessly with existing tools, reducing setup time and maximizing adoption."`,
-    },
-    {
-      id: 'risks',
-      type: 'risks',
-      title: '⚠️ Risks & Tradeoffs',
-      content: `1. **Learning Curve**: New users may need time to fully understand and leverage all features.\n\n2. **Cost Consideration**: Premium features may require ongoing subscription investment.\n\n3. **Dependency Risk**: Over-reliance on any single tool can create vendor lock-in.\n\n4. **Data Privacy**: Always review data handling and privacy policies before sharing sensitive information.\n\n5. **Complementary Approach**: Best results come from combining ${topic} with broader strategy, not using it in isolation.`,
-    },
-  ];
+
+function faqJsonLd(faqs: { question: string; answer: string }[]): string {
+  const entities = faqs.map((f) => ({
+    '@type': 'Question',
+    name: f.question,
+    acceptedAnswer: { '@type': 'Answer', text: f.answer },
+  }));
+  const schema = { '@context': 'https://schema.org', '@type': 'FAQPage', mainEntity: entities };
+  return `<script type="application/ld+json">\n${JSON.stringify(schema, null, 2)}\n</script>`;
+}
+
+function howToJsonLd(name: string, steps: string[]): string {
+  const schema = {
+    '@context': 'https://schema.org',
+    '@type': 'HowTo',
+    name: `How to get started with ${name}`,
+    step: steps.map((s, i) => ({ '@type': 'HowToStep', position: i + 1, text: s })),
+  };
+  return `<script type="application/ld+json">\n${JSON.stringify(schema, null, 2)}\n</script>`;
+}
+
+function safeHost(u: string): string {
+  try {
+    return new URL(u).hostname.replace(/^www\./, '');
+  } catch {
+    return 'your-site.com';
+  }
 }

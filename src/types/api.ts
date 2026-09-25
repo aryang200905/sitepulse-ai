@@ -15,8 +15,8 @@ export interface AnalyzeResponse {
 
 /* /api/generate-draft */
 export interface GenerateDraftRequest {
-  analysisId: string;
   url: string;
+  analysisId?: string;
 }
 
 export interface GenerateDraftResponse {
