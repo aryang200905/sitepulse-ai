@@ -10,8 +10,9 @@ import AEOPack from '@/components/AEOPack';
 import DraftPreview from '@/components/DraftPreview';
 import ExportControls from '@/components/ExportControls';
 import AppShell from '@/components/AppShell';
+import ComparePanel from '@/components/ComparePanel';
 
-type Tab = 'recommendations' | 'seo' | 'aeo' | 'draft' | 'export';
+type Tab = 'recommendations' | 'seo' | 'aeo' | 'compare' | 'draft' | 'export';
 
 export default function ResultsPage() {
   const router = useRouter();
@@ -19,36 +20,58 @@ export default function ResultsPage() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [tab, setTab] = useState<Tab>('recommendations');
 
+  const [loaded, setLoaded] = useState(false);
+
   useEffect(() => {
     if (!authLoading && !user) {
       router.push('/signin');
       return;
     }
-
-    const stored = sessionStorage.getItem('sitepulse_result');
-    if (stored) {
-      setResult(JSON.parse(stored));
-    } else if (!authLoading) {
-      router.push('/');
+    if (!authLoading) {
+      const stored = sessionStorage.getItem('sitepulse_result');
+      if (stored) setResult(JSON.parse(stored));
+      setLoaded(true);
     }
   }, [router, user, authLoading]);
 
   // Don't render anything while checking auth or redirecting
   if (authLoading || !user) return null;
 
-  if (!result) {
+  // No analysis in this session yet — prompt the user to run one first.
+  if (loaded && !result) {
     return (
-      <div className="loading-page">
-        <div className="spinner" />
-        Loading results…
-      </div>
+      <AppShell>
+        <div className="empty-state">
+          <div className="empty-state-icon">🔎</div>
+          <h2>No analysis yet</h2>
+          <p>Enter a website URL on the New Analysis page and your report will show up here.</p>
+          <button className="empty-state-btn" onClick={() => router.push('/')}>
+            → Start a new analysis
+          </button>
+        </div>
+      </AppShell>
     );
   }
 
+  if (!result) {
+    return (
+      <AppShell>
+        <div className="loading-page">
+          <div className="spinner" />
+          Loading results…
+        </div>
+      </AppShell>
+    );
+  }
+
+  const fixCount = result.recommendations.length;
+  const fixesLabel = fixCount >= 10 ? '🎯 Top 10 Fixes' : `🎯 ${fixCount} Fix${fixCount === 1 ? '' : 'es'}`;
+
   const tabs: { key: Tab; label: string }[] = [
-    { key: 'recommendations', label: '🎯 Top 10 Fixes' },
+    { key: 'recommendations', label: fixesLabel },
     { key: 'seo',             label: '🔍 SEO Details' },
     { key: 'aeo',             label: '🤖 AEO Pack' },
+    { key: 'compare',         label: '⚖️ Compare' },
     { key: 'draft',           label: '📝 Draft / Blueprint' },
     { key: 'export',          label: '📥 Export' },
   ];
@@ -114,6 +137,8 @@ export default function ResultsPage() {
         )}
 
         {tab === 'aeo' && <AEOPack modules={result.aeo.modules} />}
+
+        {tab === 'compare' && <ComparePanel base={result} />}
 
         {tab === 'draft' && (
           <div>

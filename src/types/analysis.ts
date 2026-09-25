@@ -86,6 +86,8 @@ export type SiteComplexity = 'EASY' | 'COMPLEX';
 export interface PageSignals {
   finalUrl: string;
   httpStatus: number;
+  /** How the HTML was retrieved: 'direct' | 'cloudflare' | 'firecrawl'. */
+  fetchedVia: string;
   loadTimeMs: number;
   htmlKb: number;
   wordCount: number;

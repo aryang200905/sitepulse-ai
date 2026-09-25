@@ -17,7 +17,7 @@ export default function Home() {
 
   useEffect(() => {
     if (!authLoading && !user) {
-      router.push('/signin');
+      router.push("/signin");
     }
   }, [user, authLoading, router]);
 

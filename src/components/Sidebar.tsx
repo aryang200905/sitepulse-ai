@@ -16,7 +16,7 @@ interface SidebarProps {
 
 const NAV = [
   { href: '/', label: 'New Analysis', icon: IconPulse },
-  { href: '/results', label: 'Results', icon: IconChart },
+  { href: '/results', label: 'Last Search', icon: IconChart },
 ];
 
 export default function Sidebar({ mobileOpen, onCloseMobile }: SidebarProps) {

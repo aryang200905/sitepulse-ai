@@ -45,6 +45,7 @@ export async function POST(req: NextRequest) {
     const signals: PageSignals = {
       finalUrl: meta.finalUrl,
       httpStatus: meta.httpStatus,
+      fetchedVia: parsed.via,
       loadTimeMs: meta.loadTimeMs,
       htmlKb: Math.round(meta.htmlBytes / 1024),
       wordCount: meta.wordCount,
@@ -80,12 +81,23 @@ export async function POST(req: NextRequest) {
     const message = err instanceof Error ? err.message : 'Analysis failed.';
 
     // Distinguish common failure modes for a helpful UI message.
-    const isAntiBot = /: (401|403|406|429|503|520|521|522|523)$/.test(message) || /forbidden|access denied|blocked/i.test(message);
+    const isBlocked = (err as { name?: string })?.name === 'BlockedError';
+    const isAntiBot =
+      isBlocked ||
+      /: (401|403|406|429|503|520|521|522|523)$/.test(message) ||
+      /forbidden|access denied|blocked|anti-bot|challenge/i.test(message);
     const isTimeout = /timed out|timeout|aborted/i.test(message);
     const isDns = /ENOTFOUND|getaddrinfo|fetch failed/i.test(message);
 
+    const providerConfigured = !!(
+      (process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN) ||
+      process.env.FIRECRAWL_API_KEY
+    );
+
     const friendly = isAntiBot
-      ? 'This site is blocking automated requests (likely Cloudflare or an enterprise WAF). Try a different page, or one without bot protection.'
+      ? providerConfigured
+        ? 'This site uses an aggressive bot challenge (e.g. Cloudflare Turnstile) that even a real headless browser can’t pass without solving a CAPTCHA. Try another page on the site, or a different URL.'
+        : 'This site is blocking automated requests. Enable a rendering provider (Cloudflare Browser Rendering or Firecrawl) to analyze protected sites — see .env.example.'
       : isTimeout
         ? 'The site took too long to respond. It may be slow or temporarily down.'
         : isDns

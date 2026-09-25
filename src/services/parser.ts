@@ -2,6 +2,7 @@
 
 import * as cheerio from 'cheerio';
 import type { PageMeta, Heading, JsonLdEntity } from '@/config/scoring';
+import { fetchHtml, type FetchVia } from '@/services/fetcher';
 
 export interface ParsedPage {
   meta: PageMeta;
@@ -13,52 +14,27 @@ export interface ParsedPage {
   qaPairs: { question: string; answer: string }[];
   /** Ordered-list / step sequences actually found on the page. */
   steps: string[];
+  /** How the HTML was retrieved (direct fetch vs a rendering provider). */
+  via: FetchVia;
 }
 
 // CTA / chrome phrases that signal boilerplate rather than real content.
 const BOILERPLATE_RE =
   /\b(download now|sign up|log ?in|subscribe|newsletter|get started|read more|learn more|skip to|cookie|privacy policy|terms of|all rights reserved|©|updated:)\b/i;
 
-// A realistic desktop browser UA — many sites 403 the default fetch UA.
-const BROWSER_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ' +
-  '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
-
 /**
- * Fetch a URL and turn it into a structured PageMeta plus the content our
- * generators need. Throws with a descriptive message on network / status
- * failures so the route can classify anti-bot responses.
+ * Fetch a URL (escalating past anti-bot walls when a provider is configured)
+ * and turn it into a structured PageMeta plus the content our generators need.
+ * Throws with a descriptive message on network / block failures so the route
+ * can classify anti-bot responses.
  */
 export async function parsePage(url: string): Promise<ParsedPage> {
   const started = Date.now();
-
-  const res = await fetch(url, {
-    headers: {
-      'User-Agent': BROWSER_UA,
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-    redirect: 'follow',
-    signal: AbortSignal.timeout(20_000),
-  });
-
+  const { html, finalUrl, status, via } = await fetchHtml(url);
   const loadTimeMs = Date.now() - started;
-
-  if (!res.ok) {
-    // Encode status so the route can detect anti-bot codes (403/401/406/5xx).
-    throw new Error(`Failed to fetch page: ${res.status}`);
-  }
-
-  const contentType = res.headers.get('content-type') ?? '';
-  if (!/text\/html|application\/xhtml/i.test(contentType) && contentType) {
-    throw new Error(`URL did not return an HTML document (content-type: ${contentType}).`);
-  }
-
-  const html = await res.text();
   const htmlBytes = Buffer.byteLength(html, 'utf8');
-  const finalUrl = res.url || url;
 
-  return buildParsedPage(html, url, finalUrl, res.status, loadTimeMs, htmlBytes);
+  return buildParsedPage(html, url, finalUrl, status, loadTimeMs, htmlBytes, via);
 }
 
 /** Pure parsing — separated so it is unit-testable without a network call. */
@@ -69,6 +45,7 @@ export function buildParsedPage(
   httpStatus: number,
   loadTimeMs: number,
   htmlBytes: number,
+  via: FetchVia = 'direct',
 ): ParsedPage {
   const $ = cheerio.load(html);
 
@@ -239,10 +216,10 @@ export function buildParsedPage(
     hasOrganizationSchema: hasType(/Organization|LocalBusiness/i),
   };
 
-  const qaPairs = extractQAPairs($, headings);
+  const qaPairs = extractQAPairs($);
   const steps = extractSteps($);
 
-  return { meta, textContent, mainText, qaPairs, steps };
+  return { meta, textContent, mainText, qaPairs, steps, via };
 }
 
 /* ───────────────────────── helpers ───────────────────────── */
@@ -290,7 +267,7 @@ function collectTypes(node: unknown, out: JsonLdEntity[]): void {
   }
 }
 
-function extractQAPairs($: cheerio.CheerioAPI, headings: Heading[]): { question: string; answer: string }[] {
+function extractQAPairs($: cheerio.CheerioAPI): { question: string; answer: string }[] {
   const pairs: { question: string; answer: string }[] = [];
   // Strategy: for each heading that is a question, take the text of following
   // siblings until the next heading as the answer.
