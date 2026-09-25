@@ -3,6 +3,7 @@
   import { useEffect, useState, type FormEvent } from 'react';
   import { useRouter } from 'next/navigation';
   import { useAuth } from '@/components/AuthProvider';
+  import Logo from '@/components/Logo';
 
   export default function SignInPage() {
     const router = useRouter();
@@ -63,13 +64,11 @@
 
   return (
     <div className="signin-page">
-      {/* Animated background */}
-      <div className="bg-blob blob-1" />
-      <div className="bg-blob blob-2" />
-      <div className="bg-blob blob-3" />
+      {/* Ambient gradient wash */}
+      <div className="landing-glow" />
 
       <div className="signin-card">
-        <div className="signin-logo">◆ SitePulse AI</div>
+        <div className="signin-logo"><Logo size={34} /></div>
         <h1>{isSignUp ? 'Create Account' : 'Welcome Back'}</h1>
         <p className="signin-subtitle">
           {isSignUp

@@ -9,7 +9,7 @@ import RecommendationCard from '@/components/RecommendationCard';
 import AEOPack from '@/components/AEOPack';
 import DraftPreview from '@/components/DraftPreview';
 import ExportControls from '@/components/ExportControls';
-import UserMenu from '@/components/UserMenu';
+import AppShell from '@/components/AppShell';
 
 type Tab = 'recommendations' | 'seo' | 'aeo' | 'draft' | 'export';
 
@@ -54,9 +54,8 @@ export default function ResultsPage() {
   ];
 
   return (
+    <AppShell>
     <div className="results-page">
-      {/* User menu */}
-      <UserMenu />
       {/* Header */}
       <header className="results-header">
         <button className="back-btn" onClick={() => router.push('/')} id="back-btn">
@@ -140,5 +139,6 @@ export default function ResultsPage() {
         )}
       </section>
     </div>
+    </AppShell>
   );
 }

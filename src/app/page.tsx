@@ -4,7 +4,8 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/components/AuthProvider';
 import URLInput from '@/components/URLInput';
-import UserMenu from '@/components/UserMenu';
+import AppShell from '@/components/AppShell';
+import Logo from '@/components/Logo';
 import ProgressIndicator, { PIPELINE_STEPS } from '@/components/ProgressIndicator';
 
 export default function Home() {
@@ -69,64 +70,52 @@ export default function Home() {
   if (authLoading || !user) return null;
 
   return (
-    <div className="landing-page">
-      {/* Animated background blobs */}
-      <div className="bg-blob blob-1" />
-      <div className="bg-blob blob-2" />
-      <div className="bg-blob blob-3" />
+    <AppShell>
+      <div className="landing">
+        {/* Ambient gradient wash */}
+        <div className="landing-glow" />
 
-      {/* User menu */}
-      <UserMenu />
+        <main className="landing-content">
+          <div className="landing-badge">
+            <Logo size={22} wordmark={false} />
+            <span>SitePulse AI</span>
+          </div>
 
-      <main className="landing-content">
-        <div className="logo-mark">◆ SitePulse AI</div>
-        <h1>
-          Instant SEO &amp; AEO
-          <br />
-          <span className="gradient-text">Intelligence</span>
-        </h1>
-        <p className="landing-subtitle">
-          Enter any URL and get prioritised, copy-ready recommendations
-          to rank higher in search <em>and</em> get cited by AI engines.
-        </p>
+          <h1 className="landing-title">
+            Instant <span className="gradient-text">SEO &amp; AEO</span> intelligence
+          </h1>
 
-        <div className="url-input-container">
-          <URLInput onSubmit={handleAnalyze} isLoading={isLoading} />
-          
-          {errorMessage && (
-            <div className="error-banner" id="error-banner">
-              <span className="error-banner-text">{errorMessage}</span>
-              <button
-                className="error-banner-dismiss"
-                onClick={() => setErrorMessage(null)}
-                aria-label="Dismiss error"
-              >
-                ✕
-              </button>
-            </div>
-          )}
-
-          <p className="disclaimer-text">
-            <strong>Note:</strong> Works best on standard websites. Enterprise sites with strict anti-bot 
-            protection (like Cloudflare) may block the analysis.
+          <p className="landing-subtitle">
+            Enter any URL and get prioritised, copy-ready recommendations to rank higher in
+            search <em>and</em> get cited by AI engines.
           </p>
-        </div>
 
-        {isLoading && (
-          <ProgressIndicator
-            currentStep={PIPELINE_STEPS[step]}
-            totalSteps={PIPELINE_STEPS.length}
-            completedSteps={step + 1}
-          />
-        )}
+          <div className="url-input-container">
+            <URLInput onSubmit={handleAnalyze} isLoading={isLoading} />
 
-        <div className="feature-pills">
-          <span className="pill">🔍 SEO Audit</span>
-          <span className="pill">🤖 AEO Pack</span>
-          <span className="pill">📋 Top 10 Fixes</span>
-          <span className="pill">📥 Export</span>
-        </div>
-      </main>
-    </div>
+            {errorMessage && (
+              <div className="error-banner" id="error-banner">
+                <span className="error-banner-text">{errorMessage}</span>
+                <button
+                  className="error-banner-dismiss"
+                  onClick={() => setErrorMessage(null)}
+                  aria-label="Dismiss error"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+          </div>
+
+          {isLoading && (
+            <ProgressIndicator
+              currentStep={PIPELINE_STEPS[step]}
+              totalSteps={PIPELINE_STEPS.length}
+              completedSteps={step + 1}
+            />
+          )}
+        </main>
+      </div>
+    </AppShell>
   );
 }
